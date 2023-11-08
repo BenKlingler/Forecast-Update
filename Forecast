@@ -1,0 +1,211 @@
+Sub RunAllMacros()
+
+    ' Call the ExtendForecastValues macro
+    Call ExtendForecastValues
+
+    ' Call the UpdateTotal2025 macro
+    Call UpdateTotal2025
+
+    ' Call the UpdateRemainingContractAmount macro
+    Call UpdateRemainingContractAmount
+
+End Sub
+Sub ExtendForecastValues()
+
+Debug.Print "Starting ExtendForecastValues"
+
+Dim ws As Worksheet
+Dim lastCol As Long, startDateCol As Long, endDateCol As Long, lastDateCol As Long
+Dim i As Long, lastRow As Long
+Dim endDate As Date, newDate As Date
+
+' Set the reference to the worksheet
+Set ws = ThisWorkbook.Sheets("Revenue Summary")
+
+' Determine the last column with content in the first row
+lastCol = ws.Cells(1, ws.Columns.count).End(xlToLeft).Column
+
+' Determine the last date column header
+For lastDateCol = lastCol To 1 Step -1
+    If IsDate(ws.Cells(1, lastDateCol).Value) Then
+        Exit For
+    End If
+Next lastDateCol
+
+' Assign the new date
+On Error Resume Next
+newDate = ws.Cells(1, lastDateCol).Value
+On Error GoTo 0
+
+' Find the START DATE and END DATE columns
+startDateCol = ws.Rows(1).Find("START DATE").Column
+endDateCol = ws.Rows(1).Find("END DATE").Column
+
+' Process each row
+lastRow = ws.Cells(ws.Rows.count, startDateCol).End(xlUp).Row
+For i = 2 To lastRow
+
+    ' Exit loop if "Summary" is found in the row
+    If Not IsError(Application.Match("Summary", ws.Rows(i), 0)) Then
+        Exit For
+    End If
+
+    ' Skip row if column H is empty
+    If Trim(ws.Cells(i, 8).Value) = "" Then
+        GoTo NextIteration
+    End If
+
+    ' Skip if no end date or if it's not a valid date
+    If Not IsDate(ws.Cells(i, endDateCol).Value) Then
+        GoTo NextIteration
+    Else
+        endDate = ws.Cells(i, endDateCol).Value
+    End If
+
+    ' Check if the end date extends into the new column
+    If endDate >= newDate Then
+        ' Copy value from previous month to the new month
+        ws.Cells(i, lastDateCol).Value = ws.Cells(i, lastDateCol - 1).Value
+    End If
+
+NextIteration:
+Next i
+
+Debug.Print "Ending ExtendForecastValues"
+
+Call UpdateTotal2025
+End Sub
+
+Sub UpdateTotal2025()
+
+    Debug.Print "Starting UpdateTotal2025"
+
+    Dim ws As Worksheet
+    Dim total2025Col As Long, startCol As Long, endCol As Long
+    Dim i As Long, lastRow As Long, col As Long
+
+    ' Set the reference to the worksheet
+    Set ws = ThisWorkbook.Sheets("Revenue Summary")
+
+    ' Find the column for Total 2025
+    total2025Col = ws.Rows(1).Find("Total 2025").Column
+
+    ' Identify the start and end columns for the year 2025 based on header pattern
+    startCol = 0
+    endCol = 0
+    For col = 1 To total2025Col - 1
+        If InStr(1, ws.Cells(1, col).Value, "2025") > 0 Then
+            If startCol = 0 Then startCol = col
+            endCol = col
+        End If
+    Next col
+
+    ' Ensure columns were found
+    If startCol = 0 Or endCol = 0 Then
+        MsgBox "Columns for year 2025 not found!", vbExclamation
+        Exit Sub
+    End If
+
+    ' Get the last row for calculations. Adjusted to not get the last cell in the column but the last cell in column "CONTRACT $"
+    lastRow = ws.Cells(ws.Rows.count, ws.Rows(1).Find("CONTRACT $").Column).End(xlUp).Row
+
+    ' Sum up the values for each row and populate Total 2025 column
+    For i = 2 To lastRow
+        ' Don't overwrite the header
+        If ws.Cells(i, total2025Col).Value <> "Total 2025" Then
+            ' Exit loop if "Summary" is found in the row
+            If Not IsError(Application.Match("Summary", ws.Rows(i), 0)) Then
+                Exit For
+            End If
+            ' Skip row if column H is empty
+            If Trim(ws.Cells(i, 8).Value) = "" Then
+                GoTo NextIteration
+            End If
+            ws.Cells(i, total2025Col).Formula = "=SUM(" & ws.Cells(i, startCol).Address & ":" & ws.Cells(i, endCol).Address & ")"
+        End If
+NextIteration:
+    Next i
+
+    Debug.Print "Ending UpdateTotal2025"
+
+End Sub
+
+Sub UpdateRemainingContractAmount()
+
+Debug.Print "Starting UpdateRemainingContractAmount"
+
+Dim ws As Worksheet
+Dim contractCol As Long, remainingAmountCol As Long, lastDateCol As Long
+Dim i As Long, lastRow As Long, firstDateCol As Long
+Dim prevRemainingAmount As Double
+Dim cellValue As Variant
+Dim negativeFound As Long
+
+' Set the reference to the worksheet
+Set ws = ThisWorkbook.Sheets("Revenue Summary")
+
+' Identify columns
+contractCol = ws.Rows(1).Find("CONTRACT $").Column
+remainingAmountCol = ws.Rows(1).Find("Remaining Contract Amount").Column
+
+' Identify the first date column (assuming it's the column after "Actualized")
+firstDateCol = ws.Rows(1).Find("Actualized").Column + 1
+
+' Identify the last date column
+For lastDateCol = remainingAmountCol - 1 To firstDateCol Step -1
+    If IsDate(ws.Cells(1, lastDateCol).Value) Then
+        Exit For
+    End If
+Next lastDateCol
+
+' Get the last row for calculations
+lastRow = ws.Cells(ws.Rows.count, contractCol).End(xlUp).Row
+
+' Update the formula for each row in the Remaining Contract Amount column
+For i = 2 To lastRow
+
+    ' Skip row if column H is empty or if "PM Only" is in the first column
+    If Trim(ws.Cells(i, 8).Value) = "" Or ws.Cells(i, 1).Value = "PM Only" Then
+        GoTo NextIteration
+    End If
+
+    ' Skip if the lastDateCol header format is not "mmm-yy"
+    If ws.Cells(1, lastDateCol).NumberFormat <> "mmm-yy" Then
+        GoTo NextIteration
+    End If
+
+    ' Remember the original value before updating the formula
+    If IsNumeric(ws.Cells(i, remainingAmountCol).Value) Then
+        prevRemainingAmount = ws.Cells(i, remainingAmountCol).Value
+    Else
+        prevRemainingAmount = 0
+    End If
+
+    ' Update the formula for Remaining Contract Amount
+    ws.Cells(i, remainingAmountCol).Formula = "=" & ws.Cells(i, contractCol).Address & "-SUM(" & ws.Cells(i, firstDateCol).Address & ":" & ws.Cells(i, lastDateCol).Address & ")"
+
+    ' Fetch the value
+    cellValue = ws.Cells(i, remainingAmountCol).Value
+
+    ' Check if the value is numeric
+    If IsNumeric(cellValue) Then
+        ' Check if the numeric value is less than zero
+        If cellValue < 0 Then
+            negativeFound = i
+            ' Apply the previous positive remaining amount to the new month's forecast
+            ws.Cells(i, lastDateCol).Value = ws.Cells(i, lastDateCol).Value + prevRemainingAmount
+            ws.Cells(i, remainingAmountCol).Value = 0
+        End If
+    End If
+
+NextIteration:
+Next i
+
+' If any negative value was found, display the error message
+If negativeFound > 0 Then
+    MsgBox "There isn't enough money left to extend the contract any further on row " & negativeFound & ". Remaining amounts have been applied.", vbExclamation, "Alert"
+End If
+
+Debug.Print "Ending UpdateRemainingContractAmount"
+
+End Sub
